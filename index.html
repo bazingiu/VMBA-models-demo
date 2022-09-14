@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="it">
+<header>
+    <title>VMBA Demo</title>
+    <!-- CSS only -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.0/dist/css/bootstrap.min.css" rel="stylesheet"
+          integrity="sha384-gH2yIJqKdNHPEq0n4Mqa/HGKIhSkIHeL5AyhkYV8i59U5AR6csBvApHHNl/vI1Bx" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"
+          integrity="sha512-9usAa10IRO0HhonpyAIVpjrylPvoDwiPUiKdWk5t3PyolY1cOd4DSE0Ga+ri4AuTroPR5aQvXU9xC6qOPnzFeg=="
+          crossorigin="anonymous" referrerpolicy="no-referrer"/>
+    <link rel="stylesheet" href="style.css"/>
+</header>
+<body>
+<!-- consume a single file bundle -->
+<script src="./dist/bundle.min.js"></script>
+
+<main>
+    <div class="container">
+        <div class="row">
+            <div class="col-6 offset-3">
+                <div class="row row-cols-1">
+                    <div class="col mb-3">
+                        <h1>Input</h1>
+                        <div class="form-group">
+                            <label for="switchPromptMethod">Preloaded Dataset</label>
+                            <div class="form-check form-switch form-check-inline">
+                                <input class="form-check-input" type="checkbox" role="switch"
+                                       id="switchPromptMethod" onchange="changeMethod()">
+                                <label class="form-check-label" for="switchPromptMethod">Upload Image</label>
+                            </div>
+                        </div>
+                        <div id="preloadedDatasetPrompt" class="form-group">
+                            <label for="inputFile" class="form-label fw-bold">Carica Immagine</label>
+                            <input class="form-control" type="file" id="inputFile"
+                                   onchange="loadUploadedInput()">
+                        </div>
+                        <div id="uploadImagePrompt" class="form-group">
+                            <label for="selectDatasetFrame" class="form-label fw-bold">Seleziona Frame</label>
+                            <select class="form-select" id="selectDatasetFrame"
+                                    onchange="loadSelectedInput()"></select>
+                        </div>
+                    </div>
+                    <div class="col mb-3">
+                        <div class="d-flex justify-content-center w-100">
+                            <img class="w-50 rounded" id="modelInput" src="https://via.placeholder.com/640x480"
+                                 alt="modelInput">
+                        </div>
+                    </div>
+                    <div class="col mb-3">
+                        <h1>Risultato</h1>
+                        <div class="d-flex justify-content-center w-100">
+                            <div class="flex-shrink-0">
+                                <label class="fw-bold">Immagine aggiustata per i modelli</label>
+                                <img class="rounded d-block" id="processedImage"
+                                     src="https://via.placeholder.com/224x224"
+                                     alt="processedImage">
+                                <label>
+                                    Ground Truth:
+                                    <span id="groundTruthLabel"></span>
+                                </label>
+                            </div>
+                            <div class="d-flex flex-grow-1 ms-3 justify-content-start align-items-baseline">
+                                <div class="mx-3">
+                                    <label for="outputAlexNet" class="fw-bold"> AlexNet Prediction </label>
+                                    <div class="progress" id="progressAlexNet">
+                                        <div class="progress-bar progress-bar-striped progress-bar-animated"
+                                             role="progressbar"
+                                             aria-label="Default striped example" style="width: 100%;"></div>
+                                    </div>
+                                    <div class="list-group" id="outputAlexNet"></div>
+                                </div>
+                                <div class="mx-3">
+                                    <label for="outputResNet50" class="fw-bold"> ResNet50 Prediction </label>
+                                    <div class="progress" id="progressResNet50">
+                                        <div class="progress-bar progress-bar-striped progress-bar-animated"
+                                             role="progressbar"
+                                             aria-label="Default striped example" style="width: 100%;"></div>
+                                    </div>
+                                    <div class="list-group" id="outputResNet50"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<!-- JavaScript Bundle with Popper -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.0/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-A3rJD856KowSb7dwlZdYEkO39Gagi7vIsF0jrRAoQmDKKtQBHUuLZ9AsSv4jD4Xa"
+        crossorigin="anonymous"></script>
+<script>
+    window.$ ??= document.querySelector.bind(document);
+    window.$$ ??= document.querySelectorAll.bind(document);
+
+    const WIDTH = 256;
+    const HEIGHT = 256;
+    const CROP = 224;
+</script>
+<script>
+    function changeMethod() {
+        const preloadedDatasetPrompt = $('#preloadedDatasetPrompt');
+        const uploadImagePrompt = $('#uploadImagePrompt');
+        const switchPromptMethod = $('#switchPromptMethod');
+
+        if (switchPromptMethod.checked
+        ) {
+            preloadedDatasetPrompt.classList.remove('d-none');
+            uploadImagePrompt.classList.add('d-none');
+        } else {
+            preloadedDatasetPrompt.classList.add('d-none');
+            uploadImagePrompt.classList.remove('d-none');
+        }
+    }
+
+    function convertCsvToJson(csv, labels) {
+        const lines = csv.split(/[\r\n]+/);
+        lines.shift();
+        return lines.map(l => l.split(',')).map(([v, f, l]) => [`dataset/${v}/${f}.jpg`, labels[l]]);
+    }
+
+    function lerp(a, b, p) {
+        return a + (b - a) * p;
+    }
+
+    function loadImageFromFile(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
+    }
+
+    async function loadDataset() {
+        const selectFrame = $('#selectDatasetFrame');
+
+        const labels = await fetch("dataset/labels.json", {
+            "method": "GET",
+            "mode": "cors"
+        }).then(r => r.json());
+        const frames = await fetch("dataset/labels.csv", {
+            "method": "GET",
+            "mode": "cors"
+        }).then(r => r.text()).then(csv => convertCsvToJson(csv, labels));
+
+        for (const frame of frames) {
+            selectFrame.insertAdjacentHTML('beforeend', `<option value="${frame[0]}">${frame[0]}</option>`);
+        }
+
+        const dataset = Object.fromEntries(frames);
+        selectFrame.dataframe = {labels, dataset};
+
+        console.log('DataFrame:', selectFrame.dataframe);
+
+        return dataset;
+    }
+
+    async function loadImage(support, src, width, height, crop) {
+        const p = new Promise((resolve, reject) => {
+            const a = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(support, 0, 0, width, height);
+
+                const padW = Math.floor((width - crop) / 2);
+                const padH = Math.floor((height - crop) / 2);
+
+                const data = ctx.getImageData(padW, padH, crop, crop);
+
+                const processedImage = canvas.toDataURL();
+                resolve([data, processedImage]);
+                support.removeEventListener('load', a);
+            }
+            support.addEventListener('load', a);
+            support.onerror = reject
+            support.src = src
+        })
+
+        return await p;
+    }
+
+    async function loadSelectedInput() {
+        const selectFrame = $('#selectDatasetFrame');
+        const input = $('#modelInput');
+        const processedImage = $('#processedImage');
+        const groundTruth = $('#groundTruthLabel');
+
+        selectFrame.disabled = true;
+
+        const value = selectFrame.value;
+        const dataset = selectFrame.dataframe.dataset;
+
+        groundTruth.innerText = dataset[value];
+
+        const [imageData, processedImageUrl] = await loadImage(input, value, WIDTH, HEIGHT, CROP);
+
+        processedImage.src = processedImageUrl;
+        processedImage.data = preprocess(imageData.data, CROP, CROP);
+
+        resetAlexNet();
+        resetResNet50();
+
+        await Promise.all([executeAlexNet(), executeResNet50()]);
+
+        selectFrame.disabled = false;
+    }
+
+    async function loadUploadedInput() {
+        const inputFrame = $('#inputFile');
+        const inputImage = $('#modelInput');
+        const processedImage = $('#processedImage');
+        const groundTruth = $('#groundTruthLabel');
+
+        groundTruth.innerText = 'Unknown';
+
+        inputFrame.disabled = true;
+
+        const files = inputFrame.files;
+        console.log(files);
+
+        const value = await loadImageFromFile(files[0]);
+
+        const [imageData, processedImageUrl] = await loadImage(inputImage, value, WIDTH, HEIGHT, CROP);
+
+        processedImage.src = processedImageUrl;
+        processedImage.data = preprocess(imageData.data, CROP, CROP);
+
+        resetAlexNet();
+        resetResNet50();
+
+        await Promise.all([executeAlexNet(), executeResNet50()]);
+
+        inputFrame.disabled = false;
+    }
+
+    function resetAlexNet() {
+        const output = $('#outputAlexNet');
+        const progress = $('#progressAlexNet');
+        output.style.display = 'none';
+        output.innerHTML = '';
+        progress.style.display = 'none';
+    }
+
+    function resetResNet50() {
+        const output = $('#outputResNet50');
+        const progress = $('#progressResNet50');
+        output.style.display = 'none';
+        output.innerHTML = '';
+        progress.style.display = 'none';
+    }
+
+    async function executeAlexNet() {
+        const progress = $('#progressAlexNet');
+        const selectDataset = $('#selectDatasetFrame');
+        const processedImage = $('#processedImage');
+        const output = $('#outputAlexNet');
+        const groundTruthLabel = $('#groundTruthLabel');
+
+        const labels = selectDataset.dataframe.labels;
+
+        progress.style.display = '';
+
+        const predictions = await executeAlexNetModel(processedImage.data, CROP);
+        const groundThruth = groundTruthLabel.innerText;
+
+        progress.style.display = 'none';
+        output.style.display = '';
+        let first = true;
+        for (const [p, l] of predictions) {
+            const label = labels[l];
+            const percentage = `${(p * 100).toFixed(2)}%`;
+
+            const item = document.createElement('div');
+            item.classList.add('list-group-item', 'd-flex', 'justify-content-between', 'align-items-center');
+            if (first) {
+                first = false;
+                if (groundThruth !== 'Unknown') {
+                    if (label === groundThruth) {
+                        item.classList.add('bg-success', 'text-white');
+                        item.title = 'Correct Prediction';
+                        new bootstrap.Tooltip(item);
+                    } else {
+                        item.classList.add('bg-danger', 'text-white');
+                        item.title = 'Wrong Prediction';
+                        new bootstrap.Tooltip(item);
+                    }
+                }
+            }
+            item.innerText = label;
+
+            {
+                const badge = document.createElement('span');
+                badge.innerText = percentage;
+                badge.classList.add('badge');
+                badge.classList.add('ms-2');
+                badge.style.backgroundColor = `hwb(${lerp(0, 100, p)}deg 5% 15%)`;
+                item.appendChild(badge);
+            }
+            output.appendChild(item);
+        }
+    }
+
+    async function executeResNet50() {
+        const progress = $('#progressResNet50');
+        const selectDataset = $('#selectDatasetFrame');
+        const processedImage = $('#processedImage');
+        const output = $('#outputResNet50');
+        const groundTruthLabel = $('#groundTruthLabel');
+
+        const labels = selectDataset.dataframe.labels;
+
+        progress.style.display = '';
+
+        const predictions = await executeResNet50Model(processedImage.data, CROP);
+        const groundThruth = groundTruthLabel.innerText;
+
+        progress.style.display = 'none';
+        output.style.display = '';
+        let first = true;
+        for (const [p, l] of predictions) {
+            const label = labels[l];
+            const percentage = `${(p * 100).toFixed(2)}%`;
+
+            const item = document.createElement('div');
+            item.classList.add('list-group-item', 'd-flex', 'justify-content-between', 'align-items-center');
+            if (first) {
+                first = false;
+                if (groundThruth !== 'Unknown') {
+                    if (label === groundThruth) {
+                        item.classList.add('bg-success', 'text-white');
+                        item.title = 'Correct Prediction';
+                        new bootstrap.Tooltip(item);
+                    } else {
+                        item.classList.add('bg-danger', 'text-white');
+                        item.title = 'Wrong Prediction';
+                        new bootstrap.Tooltip(item);
+                    }
+                }
+            }
+            item.innerText = label;
+
+            {
+                const badge = document.createElement('span');
+                badge.innerText = percentage;
+                badge.classList.add('badge');
+                badge.classList.add('ms-2');
+                badge.style.backgroundColor = `hwb(${lerp(0, 100, p)}deg 5% 15%)`;
+                item.appendChild(badge);
+            }
+            output.appendChild(item);
+        }
+    }
+
+
+    (async function () {
+        changeMethod();
+        resetAlexNet();
+        resetResNet50();
+
+        window.Dataset = await loadDataset();
+        await loadSelectedInput();
+    })();
+</script>
+</body>
+</html>
