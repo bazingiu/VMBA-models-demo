@@ -14,3 +14,6 @@ Un’altra funzionalità presente riguarda l’upload di immagini scelte dall’
 2. Eseguire `npm run build` per buildare il progetto e preparare la pagina web
 3. Eseguire `npm run serve` per avviare il server e rendere disponibile il programma dal browser
 4. Visitare `localhost:8080` col browser per visualizzare la demo
+
+### Live Demo
+[Video dimostrativo](https://mega.nz/file/q74AjBqT#EC-THYDZNS9OQDxQNS0tfjC0sbxqJCZXSR5N7PZyMXE)
